@@ -5,8 +5,12 @@
 
 #pragma once
 
-#include <cstddef> // For std::size_t
 #include <atomic>
+#include <cassert> // assert
+#include <cerrno> // For EINTR
+#include <cstddef> // For std::size_t
+#include <cstdint> // For std::uint64_t
+#include <ctime> // For clock_gettime
 #include <type_traits> // For std::make_signed<T>
 
 #if defined(_WIN32)
@@ -33,6 +37,14 @@ extern "C" {
 #if __GLIBC_PREREQ(2,30)
 #define MOODYCAMEL_LIGHTWEIGHTSEMAPHORE_MONOTONIC
 #endif
+#endif
+#endif
+
+#ifndef MOODYCAMEL_DELETE_FUNCTION
+#if __cplusplus >= 201103L || _MSC_VER >= 1900
+#define MOODYCAMEL_DELETE_FUNCTION = delete
+#else
+#define MOODYCAMEL_DELETE_FUNCTION
 #endif
 #endif
 
