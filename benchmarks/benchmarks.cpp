@@ -66,7 +66,9 @@ enum benchmark_type_t
 	bench_empty_dequeue,
 	bench_enqueue_dequeue_pairs,
 	bench_heavy_concurrent,
-	
+	bench_dedicated_consumer,
+	bench_dedicated_consumer_bulk,
+
 	BENCHMARK_TYPE_COUNT
 };
 
@@ -87,7 +89,9 @@ const char BENCHMARK_SHORT_NAMES[BENCHMARK_TYPE_COUNT][32] = {
 	"mpsc",
 	"empty_dequeue",
 	"enqueue_dequeue_pairs",
-	"heavy_concurrent"
+	"heavy_concurrent",
+	"dedicated_consumer",
+	"dedicated_consumer_bulk"
 };
 
 const char BENCHMARK_NAMES[BENCHMARK_TYPE_COUNT][64] = {
@@ -107,7 +111,9 @@ const char BENCHMARK_NAMES[BENCHMARK_TYPE_COUNT][64] = {
 	"multi-producer, single-consumer",
 	"dequeue from empty",
 	"enqueue-dequeue pairs",
-	"heavy concurrent"
+	"heavy concurrent",
+	"dedicated consumer (try_dequeue_from_producer)",
+	"dedicated consumer bulk (try_dequeue_bulk_from_producer)"
 };
 
 const char BENCHMARK_DESCS[BENCHMARK_TYPE_COUNT][256] = {
@@ -127,7 +133,9 @@ const char BENCHMARK_DESCS[BENCHMARK_TYPE_COUNT][256] = {
 	"Measures the average speed of dequeueing with only one consumer, but multiple producers",
 	"Measures the average speed of attempting to dequeue from an empty queue\n  (that eight separate threads had at one point enqueued to)",
 	"Measures the average operation speed with each thread doing an enqueue\n  followed by a dequeue",
-	"Measures the average operation speed with many threads under heavy load"
+	"Measures the average operation speed with many threads under heavy load",
+	"Measures dequeue speed when each consumer is paired 1:1 with a producer via\n  try_dequeue_from_producer, bypassing the full producer-list scan.\n  'Without tokens' uses general try_dequeue as a baseline for comparison.",
+	"Measures bulk dequeue speed when each consumer is paired 1:1 with a producer\n  via try_dequeue_bulk_from_producer.\n  'Without tokens' uses general try_dequeue_bulk as a baseline for comparison."
 };
 
 const char BENCHMARK_SINGLE_THREAD_NOTES[BENCHMARK_TYPE_COUNT][256] = {
@@ -147,6 +155,8 @@ const char BENCHMARK_SINGLE_THREAD_NOTES[BENCHMARK_TYPE_COUNT][256] = {
 	"",
 	"No contention -- measures raw failed dequeue speed on empty queue",
 	"No contention -- measures speed of immediately dequeueing the item that was just enqueued",
+	"",
+	"",
 	""
 };
 
@@ -165,6 +175,8 @@ int BENCHMARK_THREADS_MEASURED[BENCHMARK_TYPE_COUNT] = {
 	-1,	// nthreads - 1
 	0,
 	1,	// 1
+	0,
+	0,
 	0,
 	0,
 	0,
@@ -188,6 +200,8 @@ int BENCHMARK_THREADS[BENCHMARK_TYPE_COUNT][9] = {
 	{ 1, 2, 8, 32,  0,  0,  0,  0, 0 },
 	{ 1, 2, 4,  8, 32,  0,  0,  0, 0 },
 	{ 2, 3, 4,  8, 12, 16, 32, 48, 0 },
+	{ 2, 4, 8, 16, 32,  0,  0,  0, 0 },
+	{ 2, 4, 8, 16, 32,  0,  0,  0, 0 },
 };
 
 enum queue_id_t
@@ -248,14 +262,14 @@ const int QUEUE_MAX_THREADS[QUEUE_COUNT] = {
 };
 
 const bool QUEUE_BENCH_SUPPORT[QUEUE_COUNT][BENCHMARK_TYPE_COUNT] = {
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
-	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
-	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
-	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 },
-	{ 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0 },
-	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1 }
+	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+	{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0 },
+	{ 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0 },
+	{ 1, 1, 1, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 0 }
 };
 
 
@@ -433,11 +447,175 @@ counter_t determineMaxOpsForBenchmark(benchmark_type_t benchmark, int nthreads, 
 		}), nthreads);
 	}
 	
+	case bench_dedicated_consumer:
+	case bench_dedicated_consumer_bulk: {
+		// Proxy timing using single-threaded pre-fill + dequeue; actual benchmark
+		// uses try_dequeue_from_producer but only runs for ConcurrentQueue.
+		return adjustForThreads(rampUpToMeasurableNumberOfMaxOps([](counter_t ops) {
+			TQueue q;
+			item_t item = 1;
+			for (counter_t i = 0; i != ops; ++i) {
+				q.enqueue(item);
+			}
+			item_t item_rec;
+			auto start = getSystemTime();
+			for (counter_t i = 0; i != ops; ++i) {
+				q.try_dequeue(item_rec);
+			}
+			return getTimeDelta(start);
+		}), nthreads);
+	}
+
 	default:
 		assert(false && "Every benchmark type must be handled here!");
 		return 0;
 	}
 }
+
+
+// Base template: no-op stub so that runBenchmark<TQueue> compiles for all
+// queue types even though try_dequeue_from_producer only exists on
+// moodycamel::ConcurrentQueue. The real work is in the specialisation below.
+template<typename TQueue, typename item_t>
+struct DedicatedConsumerBenchmark {
+	static double run(benchmark_type_t, int, bool, counter_t, counter_t&)
+	{
+		assert(false && "bench_dedicated_consumer* is only supported for moodycamel::ConcurrentQueue");
+		return 0;
+	}
+};
+
+template<>
+struct DedicatedConsumerBenchmark<moodycamel::ConcurrentQueue<int, Traits>, int>
+{
+	static double run(benchmark_type_t benchmark, int nthreads, bool useTokens, counter_t maxOps, counter_t& out_opCount)
+	{
+		using Queue = moodycamel::ConcurrentQueue<int, Traits>;
+		bool isBulk = (benchmark == bench_dedicated_consumer_bulk);
+		int numPairs = nthreads / 2;
+		Queue q;
+
+		// All producer tokens are created before threads start to avoid
+		// construction races. Tokens are move-constructible; reserve() ensures
+		// emplace_back never reallocates, keeping element addresses stable.
+		std::vector<Queue::producer_token_t> prodToks;
+		prodToks.reserve(numPairs);
+		for (int i = 0; i < numPairs; ++i)
+			prodToks.emplace_back(q);
+
+		std::vector<SimpleThread> threads(nthreads);
+		std::vector<double>    timings(nthreads, 0.0);
+		std::vector<counter_t> consumerOps(numPairs, 0);
+		std::atomic<int> ready(0);
+
+		if (isBulk) {
+			std::vector<int> enqData(BULK_BATCH_SIZE);
+			for (counter_t i = 0; i != BULK_BATCH_SIZE; ++i)
+				enqData[i] = static_cast<int>(i);
+			counter_t itemsPerPair = maxOps * BULK_BATCH_SIZE;
+
+			for (int tid = 0; tid != numPairs; ++tid) {
+				threads[tid] = SimpleThread([&](int id) {
+					ready.fetch_add(1, std::memory_order_relaxed);
+					while (ready.load(std::memory_order_relaxed) != nthreads)
+						continue;
+					auto start = getSystemTime();
+					for (counter_t i = 0; i != maxOps; ++i)
+						q.enqueue_bulk(prodToks[id], enqData.cbegin(), enqData.size());
+					timings[id] = getTimeDelta(start);
+				}, tid);
+			}
+			for (int tid = numPairs; tid != nthreads; ++tid) {
+				threads[tid] = SimpleThread([&](int id) {
+					int pairId = id - numPairs;
+					std::vector<int> items(BULK_BATCH_SIZE);
+					ready.fetch_add(1, std::memory_order_relaxed);
+					while (ready.load(std::memory_order_relaxed) != nthreads)
+						continue;
+					counter_t totalDequeued = 0;
+					counter_t totalOps = 0;
+					auto start = getSystemTime();
+					if (useTokens) {
+						while (totalDequeued < itemsPerPair) {
+							auto actual = q.try_dequeue_bulk_from_producer(prodToks[pairId], items.begin(), items.size());
+							totalDequeued += actual;
+							totalOps += actual + (actual == items.size() ? 0 : 1);
+						}
+					} else {
+						while (totalDequeued < itemsPerPair) {
+							auto actual = q.try_dequeue_bulk(items.begin(), items.size());
+							totalDequeued += actual;
+							totalOps += actual + (actual == items.size() ? 0 : 1);
+						}
+					}
+					timings[id] = getTimeDelta(start);
+					consumerOps[pairId] = totalOps;
+				}, tid);
+			}
+
+			double result = 0;
+			out_opCount = 0;
+			for (int tid = 0; tid != nthreads; ++tid) {
+				threads[tid].join();
+				result += timings[tid];
+			}
+			for (int p = 0; p < numPairs; ++p)
+				out_opCount += itemsPerPair + consumerOps[p];
+			return result;
+
+		} else {
+			for (int tid = 0; tid != numPairs; ++tid) {
+				threads[tid] = SimpleThread([&](int id) {
+					ready.fetch_add(1, std::memory_order_relaxed);
+					while (ready.load(std::memory_order_relaxed) != nthreads)
+						continue;
+					int x = 1;
+					auto start = getSystemTime();
+					for (counter_t i = 0; i != maxOps; ++i)
+						q.enqueue(prodToks[id], x);
+					timings[id] = getTimeDelta(start);
+				}, tid);
+			}
+			for (int tid = numPairs; tid != nthreads; ++tid) {
+				threads[tid] = SimpleThread([&](int id) {
+					int pairId = id - numPairs;
+					ready.fetch_add(1, std::memory_order_relaxed);
+					while (ready.load(std::memory_order_relaxed) != nthreads)
+						continue;
+					int item_rec;
+					counter_t dequeued = 0;
+					counter_t attempts = 0;
+					auto start = getSystemTime();
+					if (useTokens) {
+						while (dequeued < maxOps) {
+							if (q.try_dequeue_from_producer(prodToks[pairId], item_rec))
+								++dequeued;
+							++attempts;
+						}
+					} else {
+						while (dequeued < maxOps) {
+							if (q.try_dequeue(item_rec))
+								++dequeued;
+							++attempts;
+						}
+					}
+					timings[id] = getTimeDelta(start);
+					consumerOps[pairId] = attempts;
+				}, tid);
+			}
+
+			double result = 0;
+			out_opCount = 0;
+			for (int tid = 0; tid != nthreads; ++tid) {
+				threads[tid].join();
+				result += timings[tid];
+			}
+			for (int p = 0; p < numPairs; ++p)
+				out_opCount += maxOps + consumerOps[p];
+			return result;
+		}
+	}
+};
 
 
 // Returns time elapsed, in (fractional) milliseconds
@@ -1646,12 +1824,19 @@ double runBenchmark(benchmark_type_t benchmark, int nthreads, bool useTokens, un
 		break;
 	}
 	
+	case bench_dedicated_consumer:
+	case bench_dedicated_consumer_bulk: {
+		result = DedicatedConsumerBenchmark<TQueue, item_t>::run(benchmark, nthreads, useTokens, maxOps, out_opCount);
+		forceNoOptimizeDummy = 0;
+		break;
+	}
+
 	default:
 		assert(false && "Every benchmark type must be handled here!");
 		result = 0;
 		out_opCount = 0;
 	}
-	
+
 	(void)forceNoOptimizeDummy;
 	
 	return result;
